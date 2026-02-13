@@ -7,7 +7,6 @@ Loads NetCDF files and combines them across experimental dimensions
 
 import os
 import xarray as xr
-import numpy as np
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'input', 'WRFPOST')
 
@@ -25,27 +24,6 @@ def get_case_dir(episode, ensemble, emission_rate):
     return os.path.join(DATA_DIR, dirname)
 
 
-def case_exists(episode, ensemble, emission_rate, variable, domain, temporal):
-    """Check if a specific case and variable file exists."""
-    case_dir = get_case_dir(episode, ensemble, emission_rate)
-    filename = f'{temporal}_{domain}_{variable}.nc'
-    filepath = os.path.join(case_dir, filename)
-    return os.path.exists(filepath)
-
-
-def get_available_cases(variable, domain, temporal):
-    """
-    Get list of available (episode, ensemble, emission_rate) tuples for a variable.
-    """
-    available = []
-    for ep in EPISODES:
-        for ens in ENSEMBLES:
-            for em in EMISSION_RATES:
-                if case_exists(ep, ens, em, variable, domain, temporal):
-                    available.append((ep, ens, em))
-    return available
-
-
 def load_variable(variable, domain, temporal, episode=None, ensemble=None, emission_rate=None):
     """
     Load WRF-Chem variable data.
@@ -59,11 +37,11 @@ def load_variable(variable, domain, temporal, episode=None, ensemble=None, emiss
     temporal : str
         Temporal resolution ('allhr' or 'tmean5d')
     episode : str, optional
-        Episode ID ('240527' or '240727'). If None, loads all available episodes.
+        Episode ID ('240527' or '240727'). If None, loads all episodes.
     ensemble : str, optional
-        Ensemble ID ('e1', 'e2', or 'e3'). If None, loads all available ensembles.
+        Ensemble ID ('e1', 'e2', or 'e3'). If None, loads all ensembles.
     emission_rate : str, optional
-        Emission rate ('ctl', '1000', '10000', or '100000'). If None, loads all available rates.
+        Emission rate ('ctl', '1000', '10000', or '100000'). If None, loads all rates.
 
     Returns
     -------
@@ -76,68 +54,37 @@ def load_variable(variable, domain, temporal, episode=None, ensemble=None, emiss
 
     filename = f'{temporal}_{domain}_{variable}.nc'
 
-    # Filter to only available cases
-    available_episodes = []
     data_by_episode = []
-
     for ep in episodes:
-        available_ensembles = []
         data_by_ensemble = []
-
         for ens in ensembles:
-            available_emissions = []
             data_by_emission = []
-
             for em in emission_rates:
                 case_dir = get_case_dir(ep, ens, em)
                 filepath = os.path.join(case_dir, filename)
-                if os.path.exists(filepath):
-                    ds = xr.open_dataset(filepath)
-                    da = ds[variable]
-                    data_by_emission.append(da)
-                    available_emissions.append(em)
+                ds = xr.open_dataset(filepath)
+                da = ds[variable]
+                data_by_emission.append(da)
 
-            if not data_by_emission:
-                continue
-
-            if len(available_emissions) > 1:
+            if len(emission_rates) > 1:
                 combined = xr.concat(data_by_emission, dim='emission_rate')
-                combined['emission_rate'] = available_emissions
+                combined['emission_rate'] = emission_rates
             else:
                 combined = data_by_emission[0]
-                if emission_rate is None:
-                    combined = combined.expand_dims('emission_rate')
-                    combined['emission_rate'] = available_emissions
-
             data_by_ensemble.append(combined)
-            available_ensembles.append(ens)
 
-        if not data_by_ensemble:
-            continue
-
-        if len(available_ensembles) > 1:
+        if len(ensembles) > 1:
             combined = xr.concat(data_by_ensemble, dim='ensemble')
-            combined['ensemble'] = available_ensembles
+            combined['ensemble'] = ensembles
         else:
             combined = data_by_ensemble[0]
-            if ensemble is None:
-                combined = combined.expand_dims('ensemble')
-                combined['ensemble'] = available_ensembles
-
         data_by_episode.append(combined)
-        available_episodes.append(ep)
 
-    if not data_by_episode:
-        raise FileNotFoundError(f"No data found for {variable} in {domain}/{temporal}")
-
-    if len(available_episodes) > 1:
+    if len(episodes) > 1:
         result = xr.concat(data_by_episode, dim='episode')
-        result['episode'] = available_episodes
+        result['episode'] = episodes
     else:
         result = data_by_episode[0]
-        if episode is None:
-            result = result.expand_dims('episode')
-            result['episode'] = available_episodes
 
     return result
 
