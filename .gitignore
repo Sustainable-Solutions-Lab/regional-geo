@@ -3,6 +3,11 @@ data/**
 !data/**/
 !data/**/*.md
 
+# Figures - ignore generated figures (keep .md files for documentation)
+figures/**
+!figures/**/
+!figures/**/*.md
+
 # Python
 __pycache__/
 *.py[cod]
