@@ -202,3 +202,71 @@ from src.data_loader import load_cell_area
 area = load_cell_area('d02')  # Returns xarray DataArray in km²
 # Resulting area ranges: d01: 528–844 km², d02: 67–77 km²
 ```
+
+## Ratio Analysis
+
+The `src/ratio_analysis.py` module computes gridded ratio fields with error propagation, showing how each grid cell contributes to the total domain-wide change.
+
+### Running the Analysis
+
+```bash
+python -m src.ratio_analysis
+```
+
+### Methodology
+
+1. **Time-average**: Hourly data (121 timesteps) averaged to single 2D fields
+2. **Ensemble statistics**: Mean and standard error computed across 3 ensemble members
+3. **Differences from control**: `d = mean_rate - mean_ctl` with propagated SE
+4. **Area-weighted sums**: `S = Σ(d × area)` over all grid cells
+5. **Ratio fields**: `r = d / S` (units: 1/km²) — contribution per unit area
+6. **Average across rates**: Mean of ratios from 1000, 10000, 100000 t/h injection rates
+7. **Sorted tables**: Grid cells sorted by ratio (positive → negative), with cumulative sums
+
+### Output Files
+
+Excel files (4 total, one per variable × episode):
+```
+data/output/
+├── T2_ratio_analysis_240527.xlsx
+├── T2_ratio_analysis_240727.xlsx
+├── loading_ratio_analysis_240527.xlsx
+└── loading_ratio_analysis_240727.xlsx
+```
+
+Each Excel file contains 18,744 rows (one per grid cell) with columns:
+- `ratio`: Mean ratio across emission rates (1/km²)
+- `cell_area_km2`: Grid cell area (km²)
+- `cumulative_contribution`: Running sum of ratio × area (dimensionless, sums to 1.0)
+- `cumulative_area_km2`: Running sum of cell areas (km²)
+
+PDF figures (4 total):
+```
+figures/
+├── T2_ratio_analysis_240527.pdf
+├── T2_ratio_analysis_240727.pdf
+├── loading_ratio_analysis_240527.pdf
+└── loading_ratio_analysis_240727.pdf
+```
+
+Each PDF contains two plots:
+1. **Ratio vs Cumulative Area**: Shows how ratio values vary across sorted grid cells
+2. **Cumulative Contribution vs Cumulative Area**: Shows what fraction of total change is explained by the top N km² of grid cells
+
+### Error Propagation
+
+Standard errors are propagated through each calculation step:
+- **Ensemble SE**: `SE = σ / √3`
+- **Difference SE**: `SE_d = √(SE_rate² + SE_ctl²)`
+- **Sum SE**: `SE_S = √(Σ(SE_d² × area²))`
+- **Ratio SE**: `SE_r = SE_d / |S|`
+- **Mean Ratio SE**: `SE_r_mean = √(SE_r1000² + SE_r10000² + SE_r100000²) / 3`
+
+### Units Summary
+
+| Quantity | T2 | loading |
+|----------|-----|---------|
+| Raw data | K | kg/km² |
+| Difference (d) | K | kg/km² |
+| Area-weighted sum (S) | K km² | kg |
+| Ratio (r = d/S) | 1/km² | 1/km² |

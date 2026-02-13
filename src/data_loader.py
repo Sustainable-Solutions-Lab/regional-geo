@@ -28,13 +28,13 @@ def _load_rds_as_dataarray(filepath, domain, temporal):
     xlong = geo_ds['XLONG_M'].isel(Time=0)
 
     if temporal == 'allhr':
-        # 3D DataArray with dims ('dim_0', 'dim_1', 'dim_2') = (south_north, west_east, Time)
-        da = data.rename({'dim_0': 'south_north', 'dim_1': 'west_east', 'dim_2': 'Time'})
+        # 3D DataArray with dims ('dim_0', 'dim_1', 'dim_2') = (west_east, south_north, Time)
+        da = data.rename({'dim_0': 'west_east', 'dim_1': 'south_north', 'dim_2': 'Time'})
         da = da.transpose('Time', 'south_north', 'west_east')
     else:
-        # 2D DataFrame with shape (south_north, west_east)
+        # 2D DataFrame with shape (west_east, south_north)
         da = xr.DataArray(
-            data.values,
+            data.values.T,
             dims=('south_north', 'west_east')
         )
 
