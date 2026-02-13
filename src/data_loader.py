@@ -9,6 +9,7 @@ import os
 import xarray as xr
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'input', 'WRFPOST')
+GEO_EM_PATH = os.path.join(DATA_DIR, 'geo_em.{domain}.nc')
 
 EPISODES = ['240527', '240727']
 ENSEMBLES = ['e1', 'e2', 'e3']
@@ -87,6 +88,44 @@ def load_variable(variable, domain, temporal, episode=None, ensemble=None, emiss
         result = data_by_episode[0]
 
     return result
+
+
+def load_cell_area(domain):
+    """
+    Return cell areas in km² for a WRF domain.
+
+    Uses the WRF map factor method: area = (DX * DY) / (MAPFAC_M ** 2)
+
+    Parameters
+    ----------
+    domain : str
+        Domain identifier ('d01' or 'd02')
+
+    Returns
+    -------
+    xarray.DataArray
+        Cell areas in km² with dims (south_north, west_east) and
+        coordinates (XLAT, XLONG).
+    """
+    geo_path = GEO_EM_PATH.format(domain=domain)
+    ds = xr.open_dataset(geo_path)
+
+    dx = ds.attrs['DX']
+    dy = ds.attrs['DY']
+    mapfac_m = ds['MAPFAC_M'].isel(Time=0)
+
+    # Compute area in km² (DX, DY are in meters)
+    area = (dx * dy) / (mapfac_m ** 2) / 1e6
+
+    area = area.assign_coords({
+        'XLAT': ds['XLAT_M'].isel(Time=0),
+        'XLONG': ds['XLONG_M'].isel(Time=0),
+    })
+    area.name = 'cell_area'
+    area.attrs['units'] = 'km²'
+    area.attrs['long_name'] = 'Grid cell area'
+
+    return area
 
 
 def list_available_cases():

@@ -181,3 +181,22 @@ Parameters:
 - `episode`: Optional, `'240527'` or `'240727'`
 - `ensemble`: Optional, `'e1'`, `'e2'`, or `'e3'`
 - `emission_rate`: Optional, `'ctl'`, `'1000'`, `'10000'`, or `'100000'`
+
+### Grid Cell Areas
+
+Grid cell areas vary across the domain due to map projection distortion. The `load_cell_area` function computes cell areas using the WRF map scale factor method:
+
+```
+area = (DX × DY) / (MAPFAC_M²)
+```
+
+Where:
+- `DX`, `DY`: Nominal grid spacing from file attributes (d01: 27 km, d02: 9 km)
+- `MAPFAC_M`: Map scale factor at mass points from geo_em files
+
+```python
+from src.data_loader import load_cell_area
+
+area = load_cell_area('d02')  # Returns xarray DataArray in km²
+# Resulting area ranges: d01: 528–844 km², d02: 67–77 km²
+```
