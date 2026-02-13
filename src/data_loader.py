@@ -7,6 +7,7 @@ Loads NetCDF files and combines them across experimental dimensions
 
 import os
 import xarray as xr
+import pyreadr
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'input', 'WRFPOST')
 GEO_EM_PATH = os.path.join(DATA_DIR, 'geo_em.{domain}.nc')
@@ -14,6 +15,35 @@ GEO_EM_PATH = os.path.join(DATA_DIR, 'geo_em.{domain}.nc')
 EPISODES = ['240527', '240727']
 ENSEMBLES = ['e1', 'e2', 'e3']
 EMISSION_RATES = ['ctl', '1000', '10000', '100000']
+
+
+def _load_rds_as_dataarray(filepath, domain, temporal):
+    """Load .rds file and convert to xarray DataArray with proper dimensions."""
+    result = pyreadr.read_r(filepath)
+    data = result[None]
+
+    geo_path = GEO_EM_PATH.format(domain=domain)
+    geo_ds = xr.open_dataset(geo_path)
+    xlat = geo_ds['XLAT_M'].isel(Time=0)
+    xlong = geo_ds['XLONG_M'].isel(Time=0)
+
+    if temporal == 'allhr':
+        # 3D DataArray with dims ('dim_0', 'dim_1', 'dim_2') = (south_north, west_east, Time)
+        da = data.rename({'dim_0': 'south_north', 'dim_1': 'west_east', 'dim_2': 'Time'})
+        da = da.transpose('Time', 'south_north', 'west_east')
+    else:
+        # 2D DataFrame with shape (south_north, west_east)
+        da = xr.DataArray(
+            data.values,
+            dims=('south_north', 'west_east')
+        )
+
+    da = da.assign_coords({
+        'XLAT': xlat,
+        'XLONG': xlong,
+    })
+
+    return da
 
 
 def get_case_dir(episode, ensemble, emission_rate):
@@ -53,8 +83,6 @@ def load_variable(variable, domain, temporal, episode=None, ensemble=None, emiss
     ensembles = [ensemble] if ensemble else ENSEMBLES
     emission_rates = [emission_rate] if emission_rate else EMISSION_RATES
 
-    filename = f'{temporal}_{domain}_{variable}.nc'
-
     data_by_episode = []
     for ep in episodes:
         data_by_ensemble = []
@@ -62,9 +90,15 @@ def load_variable(variable, domain, temporal, episode=None, ensemble=None, emiss
             data_by_emission = []
             for em in emission_rates:
                 case_dir = get_case_dir(ep, ens, em)
-                filepath = os.path.join(case_dir, filename)
-                ds = xr.open_dataset(filepath)
-                da = ds[variable]
+                nc_path = os.path.join(case_dir, f'{temporal}_{domain}_{variable}.nc')
+                rds_path = os.path.join(case_dir, f'{temporal}_{domain}_{variable}.rds')
+
+                if os.path.exists(nc_path):
+                    ds = xr.open_dataset(nc_path)
+                    da = ds[variable]
+                else:
+                    da = _load_rds_as_dataarray(rds_path, domain, temporal)
+
                 data_by_emission.append(da)
 
             if len(emission_rates) > 1:

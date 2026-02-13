@@ -6,3 +6,4 @@ cartopy
 pandas
 scipy
 openpyxl
+pyreadr

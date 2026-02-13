@@ -182,6 +182,8 @@ Parameters:
 - `ensemble`: Optional, `'e1'`, `'e2'`, or `'e3'`
 - `emission_rate`: Optional, `'ctl'`, `'1000'`, `'10000'`, or `'100000'`
 
+The loader transparently handles `.rds` files (R data format) when `.nc` files are not available. This allows variables like `loading` that are stored only in `.rds` format to be loaded using the same interface.
+
 ### Grid Cell Areas
 
 Grid cell areas vary across the domain due to map projection distortion. The `load_cell_area` function computes cell areas using the WRF map scale factor method:
