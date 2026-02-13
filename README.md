@@ -151,3 +151,33 @@ Raw WRF-Chem outputs are stored on UCAR Derecho HPC:
 `/glade/derecho/scratch/yuhanw/wrfchem/WRF`
 
 Contact: Yuhan Wang (yhanw@stanford.edu) or Yuan Wang (yzwang@stanford.edu)
+
+## Data Loader
+
+The `src/data_loader.py` module provides utilities for loading WRF data:
+
+```python
+from src.data_loader import load_variable
+
+# Load single case
+da = load_variable('T2', 'd02', 'tmean5d',
+                   episode='240527', ensemble='e1', emission_rate='ctl')
+# Returns: xarray.DataArray with dims (south_north, west_east)
+
+# Load all ensembles for one episode/rate
+da = load_variable('T2', 'd02', 'tmean5d',
+                   episode='240527', emission_rate='ctl')
+# Returns: xarray.DataArray with dims (ensemble, south_north, west_east)
+
+# Load all available data
+da = load_variable('T2', 'd02', 'tmean5d')
+# Returns: xarray.DataArray with dims (episode, ensemble, emission_rate, south_north, west_east)
+```
+
+Parameters:
+- `variable`: Variable name (e.g., `'T2'`, `'SWDNT'`, `'so4_a01'`)
+- `domain`: `'d01'` or `'d02'`
+- `temporal`: `'allhr'` (hourly) or `'tmean5d'` (5-day mean)
+- `episode`: Optional, `'240527'` or `'240727'`
+- `ensemble`: Optional, `'e1'`, `'e2'`, or `'e3'`
+- `emission_rate`: Optional, `'ctl'`, `'1000'`, `'10000'`, or `'100000'`
