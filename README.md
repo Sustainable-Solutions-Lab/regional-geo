@@ -62,6 +62,22 @@ Examples:
 | `domain` | `d01`, `d02` | Outer domain (coarser) or inner domain (finer resolution) |
 | `VARIABLE` | `T2`, `OLR`, etc. | Variable name in uppercase |
 
+### File Dimension Patterns
+
+Each NetCDF file contains a single variable with dimensions depending on the file type and variable:
+
+| File Type | Dimensions | Variables |
+|-----------|------------|-----------|
+| `allhr_*` 2D | (Time, south_north, west_east) | T2, ALBEDO, OLR, PBLH, LH, HFX, QFX, SWDNT, SWUPT, SWDNB, SWUPB, LWDNT, LWUPT, LWDNB, LWUPB, SWCF, LWCF, and clear-sky variants (*C) |
+| `allhr_*` 3D | (Time, bottom_top, south_north, west_east) | T, P, PB, U, V, W, QVAPOR, QCLOUD, QICE, QNDROP, CLDFRA, EXTCOF55, PM2_5_DRY, PM10, so4_a, so4_a01–so4_a04 |
+| `tmean5d_*` 2D | (south_north, west_east) | Same 2D variables as allhr, but time-averaged |
+| `tmean5d_*` 3D | (bottom_top, south_north, west_east) | Same 3D variables as allhr, but time-averaged |
+
+Dimension sizes:
+- `Time`: 121 hourly timesteps (5 days starting after 2-day spin-up)
+- `bottom_top`: 49 vertical levels
+- `south_north` / `west_east`: Grid dimensions (see below)
+
 ## Grid Dimensions
 
 | Domain | Grid Size | Description |
