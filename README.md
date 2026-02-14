@@ -234,24 +234,45 @@ data/output/
 └── loading_ratio_analysis_240727.xlsx
 ```
 
-Each Excel file contains 18,744 rows (one per grid cell) with columns:
+Each Excel file contains 18,744 rows (one per grid cell, sorted by ratio descending) with columns:
 - `ratio`: Mean ratio across emission rates (1/km²)
 - `cell_area_km2`: Grid cell area (km²)
 - `cumulative_contribution`: Running sum of ratio × area (dimensionless, sums to 1.0)
 - `cumulative_area_km2`: Running sum of cell areas (km²)
+- `cumulative_area_length_scale_km`: Square root of cumulative area (km)
+- `inverse_ratio_area_km2`: 1/ratio — characteristic area scale (km²)
+- `length_scale_km`: Square root of inverse ratio area (km)
+- `south_north_idx`: Grid row index (for mapping back to 2D grid)
+- `west_east_idx`: Grid column index (for mapping back to 2D grid)
 
-PDF figures (4 total):
+Combined PDF output:
 ```
-figures/
-├── T2_ratio_analysis_240527.pdf
-├── T2_ratio_analysis_240727.pdf
-├── loading_ratio_analysis_240527.pdf
-└── loading_ratio_analysis_240727.pdf
+data/output/ratio_analysis.pdf
 ```
 
-Each PDF contains two plots:
-1. **Ratio vs Cumulative Area**: Shows how ratio values vary across sorted grid cells
-2. **Cumulative Contribution vs Cumulative Area**: Shows what fraction of total change is explained by the top N km² of grid cells
+The PDF contains 8 pages:
+
+**Pages 1-4: Line Plots** (2×2 panels: T2/loading × 240527/240727)
+1. **Cumulative Area vs Cumulative Contribution**: Shows how much area is needed to explain a given fraction of total change
+2. **Inverse Ratio Area vs Cumulative Contribution**: Characteristic area scale at each contribution level
+3. **Cumulative Length Scale vs Cumulative Contribution**: Characteristic length scale vs contribution
+4. **Cumulative Length Scale vs Length Scale**: Relationship between individual and cumulative length scales
+
+Each line plot shows four curves: individual emission rates (r1000, r10000, r100000) as thin colored lines, and the mean across rates as a thick black line.
+
+**Pages 5-8: Geographic Maps** (one page per variable × episode)
+- Page 5: T2 — 240527
+- Page 6: T2 — 240727
+- Page 7: loading — 240527
+- Page 8: loading — 240727
+
+Each map page has 4 panels (Mean, r1000, r10000, r100000) showing cumulative contribution values at each grid cell location with:
+- Filled contours at 0.1 intervals (0.0 to 1.0)
+- Black contour lines at each level
+- Country boundaries and coastlines
+- Shared colorbar
+
+For T2 maps, absolute values are used since temperature effects can differ in sign across the domain
 
 ### Error Propagation
 

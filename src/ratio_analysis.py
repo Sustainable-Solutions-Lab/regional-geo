@@ -13,6 +13,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import xarray as xr
 
 # Allow running as script or module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -176,12 +179,14 @@ def build_sorted_table(r_mean, area):
     Returns
     -------
     numpy.ndarray
-        Array of shape (N, 7) with columns:
+        Array of shape (N, 9) with columns:
         [ratio, cell_area_km2, cumulative_contribution, cumulative_area_km2,
-         cumulative_area_length_scale_km, inverse_ratio_area_km2, length_scale_km]
+         cumulative_area_length_scale_km, inverse_ratio_area_km2, length_scale_km,
+         south_north_idx, west_east_idx]
     """
+    n_south_north, n_west_east = r_mean.shape
     N = r_mean.size
-    A = np.zeros((N, 7))
+    A = np.zeros((N, 9))
 
     A[:, 0] = r_mean.values.flatten()    # ratio (1/km²)
     A[:, 1] = area.values.flatten()       # cell area (km²)
@@ -189,6 +194,13 @@ def build_sorted_table(r_mean, area):
     A[:, 3] = A[:, 1].copy()              # area for cumulation
     A[:, 5] = 1.0 / A[:, 0]               # inverse of ratio (km²)
     A[:, 6] = np.sqrt(np.abs(A[:, 5]))    # length scale (km)
+
+    # Create grid indices for each flattened cell
+    south_north_idx, west_east_idx = np.meshgrid(
+        np.arange(n_south_north), np.arange(n_west_east), indexing='ij'
+    )
+    A[:, 7] = south_north_idx.flatten()
+    A[:, 8] = west_east_idx.flatten()
 
     # Sort descending by ratio (most positive first)
     idx = np.argsort(A[:, 0])[::-1]
@@ -218,7 +230,8 @@ def export_to_excel(table, variable, episode):
     df = pd.DataFrame(
         table,
         columns=['ratio', 'cell_area_km2', 'cumulative_contribution', 'cumulative_area_km2',
-                 'cumulative_area_length_scale_km', 'inverse_ratio_area_km2', 'length_scale_km']
+                 'cumulative_area_length_scale_km', 'inverse_ratio_area_km2', 'length_scale_km',
+                 'south_north_idx', 'west_east_idx']
     )
 
     output_path = f'data/output/{variable}_ratio_analysis_{episode}.xlsx'
@@ -226,7 +239,97 @@ def export_to_excel(table, variable, episode):
     print(f'Exported: {output_path}')
 
 
-def create_combined_plots(results):
+def build_cumulative_contribution_map(table, grid_shape):
+    """
+    Reconstruct 2D cumulative contribution map from sorted table.
+
+    Parameters
+    ----------
+    table : numpy.ndarray
+        Sorted table from build_sorted_table with columns including
+        cumulative_contribution (col 2), south_north_idx (col 7), west_east_idx (col 8)
+    grid_shape : tuple
+        Shape of the output grid (n_south_north, n_west_east)
+
+    Returns
+    -------
+    numpy.ndarray
+        2D array of cumulative contribution values at each grid cell
+    """
+    cumulative_map = np.zeros(grid_shape)
+    south_north_idx = table[:, 7].astype(int)
+    west_east_idx = table[:, 8].astype(int)
+    cumulative_map[south_north_idx, west_east_idx] = table[:, 2]
+    return cumulative_map
+
+
+def get_wrf_projection_and_coords(domain):
+    """
+    Load Lambert Conformal projection and coordinates from WRF geo_em file.
+
+    Parameters
+    ----------
+    domain : str
+        WRF domain identifier (e.g., 'd01')
+
+    Returns
+    -------
+    tuple
+        (projection, xlat, xlong) where projection is a cartopy CRS,
+        and xlat/xlong are 2D coordinate arrays
+    """
+    geo_path = f'data/input/WRFPOST/geo_em.{domain}.nc'
+    ds = xr.open_dataset(geo_path)
+
+    projection = ccrs.LambertConformal(
+        central_longitude=float(ds.attrs['CEN_LON']),
+        central_latitude=float(ds.attrs['CEN_LAT']),
+        standard_parallels=(float(ds.attrs['TRUELAT1']),)
+    )
+    xlat = ds['XLAT_M'].isel(Time=0).values
+    xlong = ds['XLONG_M'].isel(Time=0).values
+    return projection, xlat, xlong
+
+
+def plot_cumulative_contribution_map(ax, cumulative_map, xlat, xlong, projection, title):
+    """
+    Plot filled contours of cumulative contribution with contour lines.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes with cartopy projection to plot on
+    cumulative_map : numpy.ndarray
+        2D array of cumulative contribution values
+    xlat : numpy.ndarray
+        2D latitude coordinate array
+    xlong : numpy.ndarray
+        2D longitude coordinate array
+    projection : cartopy.crs.CRS
+        Map projection for the data
+    title : str
+        Title for the subplot
+
+    Returns
+    -------
+    matplotlib.contour.QuadContourSet
+        The filled contour object (for colorbar)
+    """
+    data_crs = ccrs.PlateCarree()
+    levels = np.arange(0, 1.1, 0.1)
+
+    cf = ax.contourf(xlong, xlat, cumulative_map, levels=levels,
+                     cmap='viridis', transform=data_crs)
+    ax.contour(xlong, xlat, cumulative_map, levels=levels,
+               colors='black', linewidths=0.5, transform=data_crs)
+
+    ax.add_feature(cfeature.BORDERS, linewidth=0.5, edgecolor='gray')
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor='gray')
+    ax.set_title(title)
+    return cf
+
+
+def create_combined_plots(results, area):
     """
     Create a single PDF with all ratio analysis plots.
 
@@ -236,7 +339,10 @@ def create_combined_plots(results):
         Dictionary mapping (variable, episode) to dict of tables.
         Each inner dict maps rate keys ('mean', '1000', '10000', '100000') to sorted tables.
         Table columns: [ratio, cell_area_km2, cumulative_contribution, cumulative_area_km2,
-                        cumulative_area_length_scale_km, inverse_ratio_area_km2, length_scale_km]
+                        cumulative_area_length_scale_km, inverse_ratio_area_km2, length_scale_km,
+                        south_north_idx, west_east_idx]
+    area : xarray.DataArray
+        Cell areas in km² (used to extract grid shape for maps)
     """
     output_path = 'data/output/ratio_analysis.pdf'
 
@@ -353,7 +459,140 @@ def create_combined_plots(results):
         pdf.savefig(fig)
         plt.close(fig)
 
+        # Load WRF projection and coordinates for maps
+        grid_shape = area.shape
+        projection, xlat, xlong = get_wrf_projection_and_coords(DOMAIN)
+
+        # Map pages: one page per variable×episode, panels for each rate
+        rate_panel_configs = [
+            ('mean', 'Mean', 0, 0),
+            ('1000', 'r1000', 0, 1),
+            ('10000', 'r10000', 1, 0),
+            ('100000', 'r100000', 1, 1),
+        ]
+
+        for variable in VARIABLES:
+            for episode in EPISODES:
+                fig, axes = plt.subplots(2, 2, figsize=(12, 10),
+                                         subplot_kw={'projection': projection})
+                cf = None
+                tables = results[(variable, episode)]
+                for rate_key, rate_label, row, col in rate_panel_configs:
+                    table = tables[rate_key]
+                    cumulative_map = build_cumulative_contribution_map(table, grid_shape)
+                    # For T2, use absolute value since effects differ in sign
+                    if variable == 'T2':
+                        cumulative_map = np.abs(cumulative_map)
+                    ax = axes[row, col]
+                    cf = plot_cumulative_contribution_map(
+                        ax, cumulative_map, xlat, xlong, projection,
+                        rate_label
+                    )
+                fig.suptitle(f'{variable} — {episode}: Cumulative Contribution Maps',
+                             fontsize=14, fontweight='bold')
+                plt.tight_layout(rect=[0, 0.08, 1, 1])
+                cbar = fig.colorbar(cf, ax=axes, orientation='horizontal', fraction=0.04,
+                                    pad=0.02, shrink=0.5)
+                cbar.set_label('Fraction of total loading within region', fontsize=11)
+                pdf.savefig(fig)
+                plt.close(fig)
+
+        # Zoomed map pages for T2: one page per episode
+        zoom_levels = np.arange(0, 0.22, 0.02)
+
+        for episode in EPISODES:
+            # Compute zoom extent from mean cumulative map
+            # Find grid cells where cumulative contribution <= 0.4 in the mean
+            mean_table = results[('T2', episode)]['mean']
+            mean_map = build_cumulative_contribution_map(mean_table, grid_shape)
+            mean_map = np.abs(mean_map)
+
+            # Find cells contributing to first 40% of total
+            mask = mean_map <= 0.4
+            lat_in_region = xlat[mask]
+            lon_in_region = xlong[mask]
+            lat_min, lat_max = lat_in_region.min(), lat_in_region.max()
+            lon_min, lon_max = lon_in_region.min(), lon_in_region.max()
+            # Add small buffer
+            lat_buffer = (lat_max - lat_min) * 0.1
+            lon_buffer = (lon_max - lon_min) * 0.1
+            extent = [lon_min - lon_buffer, lon_max + lon_buffer,
+                      lat_min - lat_buffer, lat_max + lat_buffer]
+
+            fig, axes = plt.subplots(2, 2, figsize=(12, 10),
+                                     subplot_kw={'projection': projection})
+            cf = None
+            tables = results[('T2', episode)]
+            for rate_key, rate_label, row, col in rate_panel_configs:
+                table = tables[rate_key]
+                cumulative_map = build_cumulative_contribution_map(table, grid_shape)
+                cumulative_map = np.abs(cumulative_map)
+                ax = axes[row, col]
+                data_crs = ccrs.PlateCarree()
+                cf = ax.contourf(xlong, xlat, cumulative_map, levels=zoom_levels,
+                                 cmap='viridis', transform=data_crs, extend='max')
+                ax.contour(xlong, xlat, cumulative_map, levels=zoom_levels,
+                           colors='black', linewidths=0.5, transform=data_crs)
+                ax.add_feature(cfeature.BORDERS, linewidth=0.5, edgecolor='gray')
+                ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor='gray')
+                ax.set_extent(extent, crs=data_crs)
+                ax.set_title(rate_label)
+
+            fig.suptitle(f'T2 — {episode}: Zoomed Cumulative Contribution (0–0.2)',
+                         fontsize=14, fontweight='bold')
+            plt.tight_layout(rect=[0, 0.08, 1, 1])
+            cbar = fig.colorbar(cf, ax=axes, orientation='horizontal', fraction=0.04,
+                                pad=0.02, shrink=0.5)
+            cbar.set_label('Fraction of total T2 change within region', fontsize=11)
+            pdf.savefig(fig)
+            plt.close(fig)
+
     print(f'Created: {output_path}')
+
+
+def export_peak_locations(results, domain):
+    """
+    Export latitude and longitude of peak ratio locations to CSV.
+
+    Parameters
+    ----------
+    results : dict
+        Dictionary mapping (variable, episode) to dict of tables
+    domain : str
+        WRF domain identifier for loading coordinates
+    """
+    _, xlat, xlong = get_wrf_projection_and_coords(domain)
+
+    rows = []
+    rate_keys = ['mean', '1000', '10000', '100000']
+
+    for variable in VARIABLES:
+        for episode in EPISODES:
+            tables = results[(variable, episode)]
+            for rate_key in rate_keys:
+                table = tables[rate_key]
+                # First row has highest ratio (sorted descending)
+                south_north_idx = int(table[0, 7])
+                west_east_idx = int(table[0, 8])
+                lat = xlat[south_north_idx, west_east_idx]
+                lon = xlong[south_north_idx, west_east_idx]
+                ratio = table[0, 0]
+
+                rows.append({
+                    'variable': variable,
+                    'episode': episode,
+                    'rate': rate_key,
+                    'latitude': lat,
+                    'longitude': lon,
+                    'ratio': ratio,
+                    'south_north_idx': south_north_idx,
+                    'west_east_idx': west_east_idx
+                })
+
+    df = pd.DataFrame(rows)
+    output_path = 'data/output/peak_locations.csv'
+    df.to_csv(output_path, index=False)
+    print(f'Exported: {output_path}')
 
 
 def analyze_variable_episode(variable, episode, area):
@@ -431,7 +670,11 @@ def main():
 
     # Create combined PDF with all plots
     print('\nCreating combined plots...')
-    create_combined_plots(results)
+    create_combined_plots(results, area)
+
+    # Export peak locations to CSV
+    print('\nExporting peak locations...')
+    export_peak_locations(results, DOMAIN)
 
     print('\n' + '=' * 60)
     print('Analysis complete!')
