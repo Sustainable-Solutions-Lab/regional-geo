@@ -226,16 +226,17 @@ def export_to_excel(table, variable, episode):
     print(f'Exported: {output_path}')
 
 
-def create_combined_plots(tables):
+def create_combined_plots(results):
     """
     Create a single PDF with all ratio analysis plots.
 
     Parameters
     ----------
-    tables : dict
-        Dictionary mapping (variable, episode) to sorted/accumulated table arrays.
-        Columns: [ratio, cell_area_km2, cumulative_contribution, cumulative_area_km2,
-                  cumulative_area_length_scale_km, inverse_ratio_area_km2, length_scale_km]
+    results : dict
+        Dictionary mapping (variable, episode) to dict of tables.
+        Each inner dict maps rate keys ('mean', '1000', '10000', '100000') to sorted tables.
+        Table columns: [ratio, cell_area_km2, cumulative_contribution, cumulative_area_km2,
+                        cumulative_area_length_scale_km, inverse_ratio_area_km2, length_scale_km]
     """
     output_path = 'data/output/ratio_analysis.pdf'
 
@@ -245,6 +246,15 @@ def create_combined_plots(tables):
     COL_CUMULATIVE_LENGTH_SCALE = 4
     COL_INVERSE_RATIO_AREA = 5
     COL_LENGTH_SCALE = 6
+
+    # Line styles: individual rates first (thin), then mean (thick) so mean is on top
+    LINE_STYLES = {
+        '1000': {'color': 'blue', 'linewidth': 0.5, 'alpha': 0.7, 'label': 'r1000'},
+        '10000': {'color': 'green', 'linewidth': 0.5, 'alpha': 0.7, 'label': 'r10000'},
+        '100000': {'color': 'red', 'linewidth': 0.5, 'alpha': 0.7, 'label': 'r100000'},
+        'mean': {'color': 'black', 'linewidth': 2, 'alpha': 1.0, 'label': 'Mean'},
+    }
+    RATE_ORDER = ['1000', '10000', '100000', 'mean']  # mean last so it's on top
 
     # Panel layout: rows = variables, cols = episodes
     panel_positions = [
@@ -258,16 +268,20 @@ def create_combined_plots(tables):
         # Page 1: Cumulative Area vs Cumulative Contribution
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         for variable, episode, row, col in panel_positions:
-            table = tables[(variable, episode)]
+            tables = results[(variable, episode)]
             ax = axes[row, col]
-            ax.plot(table[:, COL_CUMULATIVE_CONTRIBUTION], table[:, COL_CUMULATIVE_AREA],
-                    'b-', linewidth=0.5)
+            for rate_key in RATE_ORDER:
+                table = tables[rate_key]
+                style = LINE_STYLES[rate_key]
+                ax.plot(table[:, COL_CUMULATIVE_CONTRIBUTION], table[:, COL_CUMULATIVE_AREA],
+                        **style)
             ax.set_xlabel('Cumulative Contribution')
             ax.set_ylabel('Cumulative Area (km²)')
             ax.set_title(f'{variable} — {episode}')
             ax.grid(True, alpha=0.3)
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1e6)
+            ax.legend(loc='lower right', fontsize=8)
         fig.suptitle('Cumulative Area vs Cumulative Contribution', fontsize=14, fontweight='bold')
         plt.tight_layout()
         pdf.savefig(fig)
@@ -276,16 +290,20 @@ def create_combined_plots(tables):
         # Page 2: Inverse Ratio Area vs Cumulative Contribution
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         for variable, episode, row, col in panel_positions:
-            table = tables[(variable, episode)]
+            tables = results[(variable, episode)]
             ax = axes[row, col]
-            ax.plot(table[:, COL_CUMULATIVE_CONTRIBUTION], table[:, COL_INVERSE_RATIO_AREA],
-                    'g-', linewidth=0.5)
+            for rate_key in RATE_ORDER:
+                table = tables[rate_key]
+                style = LINE_STYLES[rate_key]
+                ax.plot(table[:, COL_CUMULATIVE_CONTRIBUTION], table[:, COL_INVERSE_RATIO_AREA],
+                        **style)
             ax.set_xlabel('Cumulative Contribution')
             ax.set_ylabel('Inverse Ratio Area (km²)')
             ax.set_title(f'{variable} — {episode}')
             ax.grid(True, alpha=0.3)
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1e6)
+            ax.legend(loc='upper right', fontsize=8)
         fig.suptitle('Inverse Ratio Area vs Cumulative Contribution', fontsize=14, fontweight='bold')
         plt.tight_layout()
         pdf.savefig(fig)
@@ -294,16 +312,20 @@ def create_combined_plots(tables):
         # Page 3: Cumulative Length Scale vs Cumulative Contribution
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         for variable, episode, row, col in panel_positions:
-            table = tables[(variable, episode)]
+            tables = results[(variable, episode)]
             ax = axes[row, col]
-            ax.plot(table[:, COL_CUMULATIVE_CONTRIBUTION], table[:, COL_CUMULATIVE_LENGTH_SCALE],
-                    'r-', linewidth=0.5)
+            for rate_key in RATE_ORDER:
+                table = tables[rate_key]
+                style = LINE_STYLES[rate_key]
+                ax.plot(table[:, COL_CUMULATIVE_CONTRIBUTION], table[:, COL_CUMULATIVE_LENGTH_SCALE],
+                        **style)
             ax.set_xlabel('Cumulative Contribution')
             ax.set_ylabel('Cumulative Area Length Scale (km)')
             ax.set_title(f'{variable} — {episode}')
             ax.grid(True, alpha=0.3)
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1e3)
+            ax.legend(loc='lower right', fontsize=8)
         fig.suptitle('Cumulative Length Scale vs Cumulative Contribution', fontsize=14, fontweight='bold')
         plt.tight_layout()
         pdf.savefig(fig)
@@ -312,16 +334,20 @@ def create_combined_plots(tables):
         # Page 4: Cumulative Length Scale vs Length Scale
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         for variable, episode, row, col in panel_positions:
-            table = tables[(variable, episode)]
+            tables = results[(variable, episode)]
             ax = axes[row, col]
-            ax.plot(table[:, COL_LENGTH_SCALE], table[:, COL_CUMULATIVE_LENGTH_SCALE],
-                    'm-', linewidth=0.5)
+            for rate_key in RATE_ORDER:
+                table = tables[rate_key]
+                style = LINE_STYLES[rate_key]
+                ax.plot(table[:, COL_LENGTH_SCALE], table[:, COL_CUMULATIVE_LENGTH_SCALE],
+                        **style)
             ax.set_xlabel('Length Scale (km)')
             ax.set_ylabel('Cumulative Area Length Scale (km)')
             ax.set_title(f'{variable} — {episode}')
             ax.grid(True, alpha=0.3)
             ax.set_xlim(0, 1e3)
             ax.set_ylim(0, 1e3)
+            ax.legend(loc='lower right', fontsize=8)
         fig.suptitle('Cumulative Length Scale vs Length Scale', fontsize=14, fontweight='bold')
         plt.tight_layout()
         pdf.savefig(fig)
@@ -345,8 +371,8 @@ def analyze_variable_episode(variable, episode, area):
 
     Returns
     -------
-    numpy.ndarray
-        Sorted/accumulated table
+    dict
+        Dictionary mapping rate keys ('mean', '1000', '10000', '100000') to sorted tables
     """
     print(f'\nAnalyzing {variable} for episode {episode}...')
 
@@ -366,18 +392,21 @@ def analyze_variable_episode(variable, episode, area):
     print('  Averaging across emission rates...')
     r_mean, se_r_mean = average_ratios(ratios, ratio_ses)
 
-    # Step 7: Build sorted table
-    print('  Building sorted table...')
-    table = build_sorted_table(r_mean, area)
+    # Step 7: Build sorted tables for mean and each rate
+    print('  Building sorted tables...')
+    tables = {}
+    tables['mean'] = build_sorted_table(r_mean, area)
+    for rate in NON_CONTROL_RATES:
+        tables[rate] = build_sorted_table(ratios[rate], area)
 
-    # Step 8: Export to Excel
-    export_to_excel(table, variable, episode)
+    # Step 8: Export mean table to Excel
+    export_to_excel(tables['mean'], variable, episode)
 
     # Print verification info
-    print(f'  Final cumulative contribution: {table[-1, 2]:.6f}')
-    print(f'  Final cumulative area: {table[-1, 3]:.2f} km²')
+    print(f'  Final cumulative contribution: {tables["mean"][-1, 2]:.6f}')
+    print(f'  Final cumulative area: {tables["mean"][-1, 3]:.2f} km²')
 
-    return table
+    return tables
 
 
 def main():
