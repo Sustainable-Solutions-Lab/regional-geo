@@ -6,11 +6,16 @@ normalizes by area-weighted sums to produce ratio fields, then creates
 sorted/accumulated tables showing spatial contribution distribution.
 """
 
+import os
+import sys
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
+# Allow running as script or module
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.data_loader import load_variable, load_cell_area, EPISODES, ENSEMBLES, EMISSION_RATES
 
 DOMAIN = 'd01'
@@ -171,16 +176,19 @@ def build_sorted_table(r_mean, area):
     Returns
     -------
     numpy.ndarray
-        Array of shape (N, 4) with columns:
-        [ratio, cell_area_km2, cumulative_contribution, cumulative_area_km2]
+        Array of shape (N, 7) with columns:
+        [ratio, cell_area_km2, cumulative_contribution, cumulative_area_km2,
+         cumulative_area_length_scale_km, inverse_ratio_area_km2, length_scale_km]
     """
     N = r_mean.size
-    A = np.zeros((N, 4))
+    A = np.zeros((N, 7))
 
     A[:, 0] = r_mean.values.flatten()    # ratio (1/km²)
     A[:, 1] = area.values.flatten()       # cell area (km²)
     A[:, 2] = A[:, 0] * A[:, 1]           # contribution (dimensionless)
     A[:, 3] = A[:, 1].copy()              # area for cumulation
+    A[:, 5] = 1.0 / A[:, 0]               # inverse of ratio (km²)
+    A[:, 6] = np.sqrt(np.abs(A[:, 5]))    # length scale (km)
 
     # Sort descending by ratio (most positive first)
     idx = np.argsort(A[:, 0])[::-1]
@@ -189,6 +197,7 @@ def build_sorted_table(r_mean, area):
     # Cumulate columns 2 and 3
     A[:, 2] = np.cumsum(A[:, 2])
     A[:, 3] = np.cumsum(A[:, 3])
+    A[:, 4] = np.sqrt(A[:, 3])            # cumulative area length scale (km)
 
     return A
 
@@ -208,7 +217,8 @@ def export_to_excel(table, variable, episode):
     """
     df = pd.DataFrame(
         table,
-        columns=['ratio', 'cell_area_km2', 'cumulative_contribution', 'cumulative_area_km2']
+        columns=['ratio', 'cell_area_km2', 'cumulative_contribution', 'cumulative_area_km2',
+                 'cumulative_area_length_scale_km', 'inverse_ratio_area_km2', 'length_scale_km']
     )
 
     output_path = f'data/output/{variable}_ratio_analysis_{episode}.xlsx'
@@ -216,43 +226,103 @@ def export_to_excel(table, variable, episode):
     print(f'Exported: {output_path}')
 
 
-def create_plots(table, variable, episode):
+def create_combined_plots(tables):
     """
-    Create PDF plots for ratio analysis.
+    Create a single PDF with all ratio analysis plots.
 
     Parameters
     ----------
-    table : numpy.ndarray
-        Sorted/accumulated table from build_sorted_table
-    variable : str
-        Variable name ('T2' or 'loading')
-    episode : str
-        Episode ID ('240527' or '240727')
+    tables : dict
+        Dictionary mapping (variable, episode) to sorted/accumulated table arrays.
+        Columns: [ratio, cell_area_km2, cumulative_contribution, cumulative_area_km2,
+                  cumulative_area_length_scale_km, inverse_ratio_area_km2, length_scale_km]
     """
-    output_path = f'figures/{variable}_ratio_analysis_{episode}.pdf'
+    output_path = 'data/output/ratio_analysis.pdf'
+
+    # Column indices for clarity
+    COL_CUMULATIVE_CONTRIBUTION = 2
+    COL_CUMULATIVE_AREA = 3
+    COL_CUMULATIVE_LENGTH_SCALE = 4
+    COL_INVERSE_RATIO_AREA = 5
+    COL_LENGTH_SCALE = 6
+
+    # Panel layout: rows = variables, cols = episodes
+    panel_positions = [
+        ('T2', '240527', 0, 0),
+        ('T2', '240727', 0, 1),
+        ('loading', '240527', 1, 0),
+        ('loading', '240727', 1, 1),
+    ]
 
     with PdfPages(output_path) as pdf:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        # Page 1: Cumulative Area vs Cumulative Contribution
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        for variable, episode, row, col in panel_positions:
+            table = tables[(variable, episode)]
+            ax = axes[row, col]
+            ax.plot(table[:, COL_CUMULATIVE_CONTRIBUTION], table[:, COL_CUMULATIVE_AREA],
+                    'b-', linewidth=0.5)
+            ax.set_xlabel('Cumulative Contribution')
+            ax.set_ylabel('Cumulative Area (km²)')
+            ax.set_title(f'{variable} — {episode}')
+            ax.grid(True, alpha=0.3)
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1e6)
+        fig.suptitle('Cumulative Area vs Cumulative Contribution', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        pdf.savefig(fig)
+        plt.close(fig)
 
-        # Plot 1: Ratio vs Cumulative Area
-        ax1 = axes[0]
-        ax1.plot(table[:, 3], table[:, 0], 'b-', linewidth=0.5)
-        ax1.axhline(y=0, color='k', linestyle='--', linewidth=0.5)
-        ax1.set_xlabel('Cumulative Area (km²)')
-        ax1.set_ylabel('Ratio (1/km²)')
-        ax1.set_title(f'{variable} Ratio vs Cumulative Area\nEpisode {episode}')
-        ax1.grid(True, alpha=0.3)
+        # Page 2: Inverse Ratio Area vs Cumulative Contribution
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        for variable, episode, row, col in panel_positions:
+            table = tables[(variable, episode)]
+            ax = axes[row, col]
+            ax.plot(table[:, COL_CUMULATIVE_CONTRIBUTION], table[:, COL_INVERSE_RATIO_AREA],
+                    'g-', linewidth=0.5)
+            ax.set_xlabel('Cumulative Contribution')
+            ax.set_ylabel('Inverse Ratio Area (km²)')
+            ax.set_title(f'{variable} — {episode}')
+            ax.grid(True, alpha=0.3)
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1e6)
+        fig.suptitle('Inverse Ratio Area vs Cumulative Contribution', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        pdf.savefig(fig)
+        plt.close(fig)
 
-        # Plot 2: Cumulative Contribution vs Cumulative Area
-        ax2 = axes[1]
-        ax2.plot(table[:, 3], table[:, 2], 'r-', linewidth=0.5)
-        ax2.axhline(y=1.0, color='k', linestyle='--', linewidth=0.5)
-        ax2.axhline(y=0, color='k', linestyle='--', linewidth=0.5)
-        ax2.set_xlabel('Cumulative Area (km²)')
-        ax2.set_ylabel('Cumulative Contribution')
-        ax2.set_title(f'{variable} Cumulative Contribution vs Area\nEpisode {episode}')
-        ax2.grid(True, alpha=0.3)
+        # Page 3: Cumulative Length Scale vs Cumulative Contribution
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        for variable, episode, row, col in panel_positions:
+            table = tables[(variable, episode)]
+            ax = axes[row, col]
+            ax.plot(table[:, COL_CUMULATIVE_CONTRIBUTION], table[:, COL_CUMULATIVE_LENGTH_SCALE],
+                    'r-', linewidth=0.5)
+            ax.set_xlabel('Cumulative Contribution')
+            ax.set_ylabel('Cumulative Area Length Scale (km)')
+            ax.set_title(f'{variable} — {episode}')
+            ax.grid(True, alpha=0.3)
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1e3)
+        fig.suptitle('Cumulative Length Scale vs Cumulative Contribution', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        pdf.savefig(fig)
+        plt.close(fig)
 
+        # Page 4: Cumulative Length Scale vs Length Scale
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        for variable, episode, row, col in panel_positions:
+            table = tables[(variable, episode)]
+            ax = axes[row, col]
+            ax.plot(table[:, COL_LENGTH_SCALE], table[:, COL_CUMULATIVE_LENGTH_SCALE],
+                    'm-', linewidth=0.5)
+            ax.set_xlabel('Length Scale (km)')
+            ax.set_ylabel('Cumulative Area Length Scale (km)')
+            ax.set_title(f'{variable} — {episode}')
+            ax.grid(True, alpha=0.3)
+            ax.set_xlim(0, 1e3)
+            ax.set_ylim(0, 1e3)
+        fig.suptitle('Cumulative Length Scale vs Length Scale', fontsize=14, fontweight='bold')
         plt.tight_layout()
         pdf.savefig(fig)
         plt.close(fig)
@@ -303,9 +373,6 @@ def analyze_variable_episode(variable, episode, area):
     # Step 8: Export to Excel
     export_to_excel(table, variable, episode)
 
-    # Step 9: Create plots
-    create_plots(table, variable, episode)
-
     # Print verification info
     print(f'  Final cumulative contribution: {table[-1, 2]:.6f}')
     print(f'  Final cumulative area: {table[-1, 3]:.2f} km²')
@@ -332,6 +399,10 @@ def main():
         for episode in EPISODES:
             key = (variable, episode)
             results[key] = analyze_variable_episode(variable, episode, area)
+
+    # Create combined PDF with all plots
+    print('\nCreating combined plots...')
+    create_combined_plots(results)
 
     print('\n' + '=' * 60)
     print('Analysis complete!')
