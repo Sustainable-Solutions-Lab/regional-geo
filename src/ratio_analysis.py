@@ -16,6 +16,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import xarray as xr
+from scipy.ndimage import gaussian_filter
 
 # Allow running as script or module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -497,62 +498,118 @@ def create_combined_plots(results, area):
                 pdf.savefig(fig)
                 plt.close(fig)
 
-        # Zoomed map pages for T2: one page per episode
+        # Zoomed map pages: one page per variable × episode
         zoom_levels = np.arange(0, 0.22, 0.02)
+        variable_labels = {
+            'T2': 'Fraction of total temperature deviation within region',
+            'loading': 'Fraction of total loading within region'
+        }
 
-        for episode in EPISODES:
-            # Compute zoom extent from mean cumulative map
-            # Find grid cells where cumulative contribution <= 0.4 in the mean
-            mean_table = results[('T2', episode)]['mean']
-            mean_map = build_cumulative_contribution_map(mean_table, grid_shape)
-            mean_map = np.abs(mean_map)
+        for variable in VARIABLES:
+            for episode in EPISODES:
+                # Compute zoom extent from mean cumulative map
+                # Find grid cells where cumulative contribution <= 0.4 in the mean
+                mean_table = results[(variable, episode)]['mean']
+                mean_map = build_cumulative_contribution_map(mean_table, grid_shape)
+                if variable == 'T2':
+                    mean_map = np.abs(mean_map)
 
-            # Find cells contributing to first 40% of total
-            mask = mean_map <= 0.4
-            lat_in_region = xlat[mask]
-            lon_in_region = xlong[mask]
-            lat_min, lat_max = lat_in_region.min(), lat_in_region.max()
-            lon_min, lon_max = lon_in_region.min(), lon_in_region.max()
-            # Add small buffer
-            lat_buffer = (lat_max - lat_min) * 0.1
-            lon_buffer = (lon_max - lon_min) * 0.1
-            extent = [lon_min - lon_buffer, lon_max + lon_buffer,
-                      lat_min - lat_buffer, lat_max + lat_buffer]
+                # Find cells contributing to first 40% of total
+                mask = mean_map <= 0.4
+                lat_in_region = xlat[mask]
+                lon_in_region = xlong[mask]
+                lat_min, lat_max = lat_in_region.min(), lat_in_region.max()
+                lon_min, lon_max = lon_in_region.min(), lon_in_region.max()
+                # Add small buffer
+                lat_buffer = (lat_max - lat_min) * 0.1
+                lon_buffer = (lon_max - lon_min) * 0.1
+                extent = [lon_min - lon_buffer, lon_max + lon_buffer,
+                          lat_min - lat_buffer, lat_max + lat_buffer]
 
-            fig, axes = plt.subplots(2, 2, figsize=(12, 10),
-                                     subplot_kw={'projection': projection})
-            cf = None
-            tables = results[('T2', episode)]
-            for rate_key, rate_label, row, col in rate_panel_configs:
-                table = tables[rate_key]
-                cumulative_map = build_cumulative_contribution_map(table, grid_shape)
-                cumulative_map = np.abs(cumulative_map)
-                ax = axes[row, col]
-                data_crs = ccrs.PlateCarree()
-                cf = ax.contourf(xlong, xlat, cumulative_map, levels=zoom_levels,
-                                 cmap='viridis', transform=data_crs, extend='max')
-                ax.contour(xlong, xlat, cumulative_map, levels=zoom_levels,
-                           colors='black', linewidths=0.5, transform=data_crs)
-                ax.add_feature(cfeature.BORDERS, linewidth=0.5, edgecolor='gray')
-                ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor='gray')
-                ax.set_extent(extent, crs=data_crs)
-                ax.set_title(rate_label)
+                fig, axes = plt.subplots(2, 2, figsize=(12, 10),
+                                         subplot_kw={'projection': projection})
+                cf = None
+                tables = results[(variable, episode)]
+                for rate_key, rate_label, row, col in rate_panel_configs:
+                    table = tables[rate_key]
+                    cumulative_map = build_cumulative_contribution_map(table, grid_shape)
+                    if variable == 'T2':
+                        cumulative_map = np.abs(cumulative_map)
+                    ax = axes[row, col]
+                    data_crs = ccrs.PlateCarree()
+                    cf = ax.contourf(xlong, xlat, cumulative_map, levels=zoom_levels,
+                                     cmap='viridis', transform=data_crs, extend='max')
+                    ax.contour(xlong, xlat, cumulative_map, levels=zoom_levels,
+                               colors='black', linewidths=0.5, transform=data_crs)
+                    ax.add_feature(cfeature.BORDERS, linewidth=0.5, edgecolor='gray')
+                    ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor='gray')
+                    ax.set_extent(extent, crs=data_crs)
+                    ax.set_title(rate_label)
 
-            fig.suptitle(f'T2 — {episode}: Zoomed Cumulative Contribution (0–0.2)',
-                         fontsize=14, fontweight='bold')
-            plt.tight_layout(rect=[0, 0.08, 1, 1])
-            cbar = fig.colorbar(cf, ax=axes, orientation='horizontal', fraction=0.04,
-                                pad=0.02, shrink=0.5)
-            cbar.set_label('Fraction of total T2 change within region', fontsize=11)
-            pdf.savefig(fig)
-            plt.close(fig)
+                fig.suptitle(f'{variable} — {episode}: Zoomed Cumulative Contribution (0–0.2)',
+                             fontsize=14, fontweight='bold')
+                plt.tight_layout(rect=[0, 0.08, 1, 1])
+                cbar = fig.colorbar(cf, ax=axes, orientation='horizontal', fraction=0.04,
+                                    pad=0.02, shrink=0.5)
+                cbar.set_label(variable_labels[variable], fontsize=11)
+                pdf.savefig(fig)
+                plt.close(fig)
 
     print(f'Created: {output_path}')
 
 
-def export_peak_locations(results, domain):
+def reconstruct_ratio_field(table, grid_shape):
+    """Reconstruct 2D ratio field from sorted table."""
+    ratio_field = np.zeros(grid_shape)
+    south_north_idx = table[:, 7].astype(int)
+    west_east_idx = table[:, 8].astype(int)
+    ratio_field[south_north_idx, west_east_idx] = table[:, 0]
+    return ratio_field
+
+
+def find_peak_and_cumul_fracs(ratio_field, t2_table, loading_table, xlat, xlong):
+    """
+    Find peak location in ratio field and look up cumulative fractions.
+
+    Returns dict with peak info.
+    """
+    # Find peak location
+    peak_idx = np.unravel_index(np.argmax(ratio_field), ratio_field.shape)
+    south_north_idx, west_east_idx = peak_idx
+    lat = xlat[south_north_idx, west_east_idx]
+    lon = xlong[south_north_idx, west_east_idx]
+
+    # Find this cell's position in T2 table and get ratio and cumulative contribution
+    t2_cell_mask = (t2_table[:, 7] == south_north_idx) & (t2_table[:, 8] == west_east_idx)
+    t2_row_idx = np.where(t2_cell_mask)[0][0]
+    ratio_T2 = t2_table[t2_row_idx, 0]
+    cumul_frac_T2 = t2_table[t2_row_idx, 2]
+
+    # Find this cell's position in loading table and get ratio and cumulative contribution
+    loading_cell_mask = (loading_table[:, 7] == south_north_idx) & (loading_table[:, 8] == west_east_idx)
+    loading_row_idx = np.where(loading_cell_mask)[0][0]
+    ratio_loading = loading_table[loading_row_idx, 0]
+    cumul_frac_loading = loading_table[loading_row_idx, 2]
+
+    return {
+        'latitude': lat,
+        'longitude': lon,
+        'ratio_T2': ratio_T2,
+        'ratio_loading': ratio_loading,
+        'cumul_frac_T2': cumul_frac_T2,
+        'cumul_frac_loading': cumul_frac_loading,
+        'south_north_idx': south_north_idx,
+        'west_east_idx': west_east_idx
+    }
+
+
+def export_peak_locations(results, domain, area):
     """
     Export latitude and longitude of peak ratio locations to CSV.
+
+    For each peak cell, reports cumulative contributions for both T2 and loading,
+    showing what fraction of each variable is in cells with ratio >= this cell's ratio.
+    Includes unsmoothed, 5x5 smoothed, and 9x9 smoothed peak analyses.
 
     Parameters
     ----------
@@ -560,34 +617,58 @@ def export_peak_locations(results, domain):
         Dictionary mapping (variable, episode) to dict of tables
     domain : str
         WRF domain identifier for loading coordinates
+    area : xarray.DataArray
+        Cell areas (used for grid shape)
     """
     _, xlat, xlong = get_wrf_projection_and_coords(domain)
+    grid_shape = area.shape
 
     rows = []
     rate_keys = ['mean', '1000', '10000', '100000']
 
+    # Gaussian smoothing with physical length scales
+    # d01 nominal grid spacing is 27 km, so sigma = length_scale_km / 27
+    GRID_SPACING_KM = 27.0
+    smoothing_configs = [
+        ('none', 0),
+        ('100km', 100.0 / GRID_SPACING_KM),
+        ('300km', 300.0 / GRID_SPACING_KM),
+    ]
+
     for variable in VARIABLES:
         for episode in EPISODES:
             tables = results[(variable, episode)]
+            t2_table = results[('T2', episode)]
+            loading_table = results[('loading', episode)]
+
             for rate_key in rate_keys:
                 table = tables[rate_key]
-                # First row has highest ratio (sorted descending)
-                south_north_idx = int(table[0, 7])
-                west_east_idx = int(table[0, 8])
-                lat = xlat[south_north_idx, west_east_idx]
-                lon = xlong[south_north_idx, west_east_idx]
-                ratio = table[0, 0]
 
-                rows.append({
-                    'variable': variable,
-                    'episode': episode,
-                    'rate': rate_key,
-                    'latitude': lat,
-                    'longitude': lon,
-                    'ratio': ratio,
-                    'south_north_idx': south_north_idx,
-                    'west_east_idx': west_east_idx
-                })
+                # Reconstruct 2D ratio field
+                ratio_field = reconstruct_ratio_field(table, grid_shape)
+
+                for smoothing_name, sigma in smoothing_configs:
+                    # Apply Gaussian smoothing if needed
+                    if sigma > 0:
+                        smoothed_field = gaussian_filter(ratio_field, sigma=sigma)
+                    else:
+                        smoothed_field = ratio_field
+
+                    # Find peak and cumulative fractions
+                    peak_info = find_peak_and_cumul_fracs(
+                        smoothed_field,
+                        t2_table[rate_key],
+                        loading_table[rate_key],
+                        xlat, xlong
+                    )
+
+                    rows.append({
+                        'peak_variable': variable,
+                        'episode': episode,
+                        'rate': rate_key,
+                        'smoothing': smoothing_name,
+                        **peak_info
+                    })
 
     df = pd.DataFrame(rows)
     output_path = 'data/output/peak_locations.csv'
@@ -674,7 +755,7 @@ def main():
 
     # Export peak locations to CSV
     print('\nExporting peak locations...')
-    export_peak_locations(results, DOMAIN)
+    export_peak_locations(results, DOMAIN, area)
 
     print('\n' + '=' * 60)
     print('Analysis complete!')
